@@ -301,7 +301,16 @@ export default {
     priority: '優先度',
     dueDate: '期限',
     addTask: 'タスクを追加',
-    noTasks: 'タスクがありません。上記からタスクを追加してください！'
+    noTasks: 'タスクがありません。上記からタスクを追加してください！',
+    pendingCount: '未完了 {count} 件',
+    myTasksAria: 'マイタスク、未完了 {count} 件',
+    manageTasks: 'タスクを管理',
+    noPending: '未完了のタスクはありません。',
+    markComplete: '「{title}」を完了にする',
+    overdue: '期限超過',
+    dueSoon: 'もうすぐ期限',
+    upcoming: '予定',
+    more: '他 {count} 件'
   },
 
   // Language

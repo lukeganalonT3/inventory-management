@@ -1,42 +1,43 @@
 <template>
-  <div class="app">
-    <header class="top-nav">
-      <div class="nav-container">
-        <div class="logo">
-          <h1>{{ t('nav.companyName') }}</h1>
-          <span class="subtitle">{{ t('nav.subtitle') }}</span>
+  <!-- --sidebar-width follows the collapsed state so the grid column resizes with it -->
+  <div class="app-shell" :style="{ '--sidebar-width': collapsed ? 'var(--sidebar-width-rail)' : 'var(--sidebar-width-full)' }">
+    <AppSidebar
+      :open="sidebarOpen"
+      :collapsed="collapsed"
+      :can-toggle="!isNarrow"
+      @close="sidebarOpen = false"
+      @toggle-collapsed="toggleCollapsed"
+    />
+
+    <div class="app-body">
+      <header class="app-header">
+        <button
+          type="button"
+          class="menu-button"
+          aria-label="Open navigation"
+          :aria-expanded="sidebarOpen ? 'true' : 'false'"
+          @click="sidebarOpen = true"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M3 5h14M3 10h14M3 15h14" />
+          </svg>
+        </button>
+        <h1 class="app-title">{{ pageTitle }}</h1>
+        <div class="app-actions">
+          <LanguageSwitcher />
+          <ProfileMenu
+            @show-profile-details="showProfileDetails = true"
+            @show-tasks="openTasks"
+          />
         </div>
-        <nav class="nav-tabs">
-          <router-link to="/" :class="{ active: $route.path === '/' }">
-            {{ t('nav.overview') }}
-          </router-link>
-          <router-link to="/inventory" :class="{ active: $route.path === '/inventory' }">
-            {{ t('nav.inventory') }}
-          </router-link>
-          <router-link to="/orders" :class="{ active: $route.path === '/orders' }">
-            {{ t('nav.orders') }}
-          </router-link>
-          <router-link to="/spending" :class="{ active: $route.path === '/spending' }">
-            {{ t('nav.finance') }}
-          </router-link>
-          <router-link to="/demand" :class="{ active: $route.path === '/demand' }">
-            {{ t('nav.demandForecast') }}
-          </router-link>
-          <router-link to="/reports" :class="{ active: $route.path === '/reports' }">
-            Reports
-          </router-link>
-        </nav>
-        <LanguageSwitcher />
-        <ProfileMenu
-          @show-profile-details="showProfileDetails = true"
-          @show-tasks="showTasks = true"
-        />
-      </div>
-    </header>
-    <FilterBar />
-    <main class="main-content">
-      <router-view />
-    </main>
+      </header>
+
+      <FilterBar />
+
+      <main class="main-content">
+        <router-view />
+      </main>
+    </div>
 
     <ProfileDetailsModal
       :is-open="showProfileDetails"
@@ -46,7 +47,7 @@
     <TasksModal
       :is-open="showTasks"
       :tasks="tasks"
-      @close="showTasks = false"
+      @close="closeTasks"
       @add-task="addTask"
       @delete-task="deleteTask"
       @toggle-task="toggleTask"
@@ -55,10 +56,11 @@
 </template>
 
 <script>
-import { ref, onMounted, computed } from 'vue'
-import { api } from './api'
-import { useAuth } from './composables/useAuth'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { useTasks } from './composables/useTasks'
 import { useI18n } from './composables/useI18n'
+import AppSidebar from './components/AppSidebar.vue'
 import FilterBar from './components/FilterBar.vue'
 import ProfileMenu from './components/ProfileMenu.vue'
 import ProfileDetailsModal from './components/ProfileDetailsModal.vue'
@@ -68,6 +70,7 @@ import LanguageSwitcher from './components/LanguageSwitcher.vue'
 export default {
   name: 'App',
   components: {
+    AppSidebar,
     FilterBar,
     ProfileMenu,
     ProfileDetailsModal,
@@ -75,76 +78,73 @@ export default {
     LanguageSwitcher
   },
   setup() {
-    const { currentUser } = useAuth()
+    const { tasks, showTasks, closeTasks, openTasks, loadTasks, addTask, deleteTask, toggleTask } = useTasks()
     const { t } = useI18n()
+    const route = useRoute()
     const showProfileDetails = ref(false)
-    const showTasks = ref(false)
-    const apiTasks = ref([])
+    const sidebarOpen = ref(false)
 
-    // Merge mock tasks from currentUser with API tasks
-    const tasks = computed(() => {
-      return [...currentUser.value.tasks, ...apiTasks.value]
+    // Page title comes from the route path, reusing the sidebar's i18n labels.
+    // "Reports" has no i18n key yet, so it stays hardcoded like in the sidebar.
+    const pageTitle = computed(() => {
+      const titles = {
+        '/': t('nav.overview'),
+        '/inventory': t('nav.inventory'),
+        '/orders': t('nav.orders'),
+        '/spending': t('nav.finance'),
+        '/demand': t('nav.demandForecast'),
+        '/reports': 'Reports'
+      }
+      return titles[route.path] || t('nav.companyName')
     })
 
-    const loadTasks = async () => {
+    // Sidebar mode. Width defaults come from matchMedia (not CSS alone) because the
+    // collapsed state also drives labels, aria attributes and the grid width in JS.
+    // <900px: icons-only rail; <640px: off-canvas drawer with full labels.
+    const STORAGE_KEY = 'sidebar-collapsed'
+    const readSaved = () => {
       try {
-        apiTasks.value = await api.getTasks()
-      } catch (err) {
-        console.error('Failed to load tasks:', err)
+        const v = localStorage.getItem(STORAGE_KEY)
+        return v === null ? null : v === 'true'
+      } catch (e) {
+        return null // storage blocked: fall back to the width default
+      }
+    }
+    const savedCollapsed = ref(readSaved())
+    const narrowQuery = window.matchMedia('(max-width: 900px)')
+    const drawerQuery = window.matchMedia('(max-width: 639px)')
+    const isNarrow = ref(narrowQuery.matches)
+    const isDrawer = ref(drawerQuery.matches)
+    const onNarrow = (e) => { isNarrow.value = e.matches }
+    const onDrawer = (e) => { isDrawer.value = e.matches }
+    narrowQuery.addEventListener('change', onNarrow)
+    drawerQuery.addEventListener('change', onDrawer)
+    onBeforeUnmount(() => {
+      narrowQuery.removeEventListener('change', onNarrow)
+      drawerQuery.removeEventListener('change', onDrawer)
+    })
+
+    // The saved choice only applies on wide screens: on tablets the rail is forced
+    // so a choice made on a desktop does not break a small viewport (and vice versa).
+    const collapsed = computed(() => {
+      if (isDrawer.value) return false
+      if (isNarrow.value) return true
+      return savedCollapsed.value === true
+    })
+
+    const toggleCollapsed = () => {
+      savedCollapsed.value = !collapsed.value
+      try {
+        localStorage.setItem(STORAGE_KEY, String(savedCollapsed.value))
+      } catch (e) {
+        // ignore: the choice just will not persist
       }
     }
 
-    const addTask = async (taskData) => {
-      try {
-        const newTask = await api.createTask(taskData)
-        // Add new task to the beginning of the array
-        apiTasks.value.unshift(newTask)
-      } catch (err) {
-        console.error('Failed to add task:', err)
-      }
-    }
-
-    const deleteTask = async (taskId) => {
-      try {
-        // Check if it's a mock task (from currentUser)
-        const isMockTask = currentUser.value.tasks.some(t => t.id === taskId)
-
-        if (isMockTask) {
-          // Remove from mock tasks
-          const index = currentUser.value.tasks.findIndex(t => t.id === taskId)
-          if (index !== -1) {
-            currentUser.value.tasks.splice(index, 1)
-          }
-        } else {
-          // Remove from API tasks
-          await api.deleteTask(taskId)
-          apiTasks.value = apiTasks.value.filter(t => t.id !== taskId)
-        }
-      } catch (err) {
-        console.error('Failed to delete task:', err)
-      }
-    }
-
-    const toggleTask = async (taskId) => {
-      try {
-        // Check if it's a mock task (from currentUser)
-        const mockTask = currentUser.value.tasks.find(t => t.id === taskId)
-
-        if (mockTask) {
-          // Toggle mock task status
-          mockTask.status = mockTask.status === 'pending' ? 'completed' : 'pending'
-        } else {
-          // Toggle API task
-          const updatedTask = await api.toggleTask(taskId)
-          const index = apiTasks.value.findIndex(t => t.id === taskId)
-          if (index !== -1) {
-            apiTasks.value[index] = updatedTask
-          }
-        }
-      } catch (err) {
-        console.error('Failed to toggle task:', err)
-      }
-    }
+    // Close the mobile drawer whenever navigation happens.
+    watch(() => route.path, () => {
+      sidebarOpen.value = false
+    })
 
     onMounted(loadTasks)
 
@@ -152,6 +152,13 @@ export default {
       t,
       showProfileDetails,
       showTasks,
+      openTasks,
+      closeTasks,
+      sidebarOpen,
+      collapsed,
+      isNarrow,
+      toggleCollapsed,
+      pageTitle,
       tasks,
       addTask,
       deleteTask,
@@ -161,7 +168,60 @@ export default {
 }
 </script>
 
+
 <style>
+/* Design tokens: defined once here, read by shared primitives and components. */
+:root {
+  /* Color */
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+  --color-text: #0f172a;
+  --color-text-body: #334155;
+  --color-text-muted: #64748b;
+  --color-accent: #2563eb;
+  --color-accent-soft: #eff6ff;
+  --color-success: #059669;
+  --color-warning: #ea580c;
+  --color-danger: #dc2626;
+
+  /* Sidebar */
+  --sidebar-bg: #0f172a;
+  --sidebar-text: #cbd5e1;
+  --sidebar-text-active: #ffffff;
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-active: rgba(255, 255, 255, 0.1);
+  --sidebar-width-full: 248px;
+  --sidebar-width-rail: 72px;
+  --sidebar-width: var(--sidebar-width-full); /* overridden on .app-shell */
+
+  /* Spacing: 4px base */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  /* Radius: sm for controls and badges, md for cards and panels */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+
+  --shadow-hover: 0 2px 8px rgba(15, 23, 42, 0.06);
+
+  /* Type */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 0.938rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-stat: 2rem;
+
+  --header-height: 56px;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -169,202 +229,185 @@ export default {
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background: #f8fafc;
-  color: #1e293b;
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+  color: var(--color-text-body);
+  font-size: var(--text-base);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-.app {
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Shell: sidebar + content column */
+.app-shell {
+  display: grid;
+  /* minmax(0, 1fr) lets the column shrink below its content's min width,
+     so wide tables scroll inside .table-container instead of widening the page. */
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+  transition: grid-template-columns 0.2s ease;
+}
+
+.app-body {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-width: 0;
 }
 
-.top-nav {
-  background: #ffffff;
-  border-bottom: 1px solid #e2e8f0;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+.app-header {
   position: sticky;
   top: 0;
-  z-index: 100;
-}
-
-.nav-container {
-  max-width: 1600px;
-  margin: 0 auto;
+  /* Above page content, below the drawer (50) and modals */
+  z-index: 40;
   display: flex;
   align-items: center;
-  padding: 0 2rem;
-  height: 70px;
+  gap: var(--space-3);
+  height: var(--header-height);
+  padding: 0 var(--space-6);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
 }
 
-.nav-container > .nav-tabs {
+.app-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-actions {
   margin-left: auto;
-  margin-right: 1rem;
-}
-
-.nav-container > .language-switcher {
-  margin-right: 1rem;
-}
-
-.logo {
   display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
+  align-items: center;
+  gap: var(--space-3);
 }
 
-.logo h1 {
-  font-size: 1.375rem;
-  font-weight: 700;
-  color: #0f172a;
-  letter-spacing: -0.025em;
+.menu-button {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-body);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-.subtitle {
-  font-size: 0.813rem;
-  color: #64748b;
-  font-weight: 400;
-  padding-left: 0.75rem;
-  border-left: 1px solid #e2e8f0;
+.menu-button:hover {
+  background: var(--color-bg);
+  border-color: var(--color-border-strong);
 }
 
-.nav-tabs {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.nav-tabs a {
-  padding: 0.625rem 1.25rem;
-  color: #64748b;
-  text-decoration: none;
-  font-weight: 500;
-  font-size: 0.938rem;
-  border-radius: 6px;
-  transition: all 0.2s ease;
-  position: relative;
-}
-
-.nav-tabs a:hover {
-  color: #0f172a;
-  background: #f1f5f9;
-}
-
-.nav-tabs a.active {
-  color: #2563eb;
-  background: #eff6ff;
-}
-
-.nav-tabs a.active::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: #2563eb;
+.menu-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
 }
 
 .main-content {
   flex: 1;
-  max-width: 1600px;
   width: 100%;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 1.5rem 2rem;
+  padding: var(--space-5) var(--space-6);
+  /* Safety net: some views have fixed-width chart/search elements that overflow on
+     narrow screens; scroll inside the content area instead of the whole page. */
+  overflow-x: auto;
 }
 
+/* In-page heading used by views (their scoped rules may add layout) */
 .page-header {
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--space-5);
 }
 
 .page-header h2 {
-  font-size: 1.875rem;
-  font-weight: 700;
-  color: #0f172a;
-  margin-bottom: 0.375rem;
-  letter-spacing: -0.025em;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--space-1);
+  letter-spacing: -0.02em;
 }
 
 .page-header p {
-  color: #64748b;
-  font-size: 0.938rem;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
 }
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1.25rem;
-  margin-bottom: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 
 .stat-card {
-  background: white;
-  padding: 1.25rem;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  transition: all 0.2s ease;
+  background: var(--color-surface);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .stat-card:hover {
-  border-color: #cbd5e1;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-hover);
 }
 
 .stat-label {
-  color: #64748b;
-  font-size: 0.875rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 0.625rem;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  margin-bottom: var(--space-2);
 }
 
 .stat-value {
-  font-size: 2.25rem;
-  font-weight: 700;
-  color: #0f172a;
-  letter-spacing: -0.025em;
+  font-size: var(--text-stat);
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.02em;
 }
 
-.stat-card.warning .stat-value {
-  color: #ea580c;
-}
-
-.stat-card.success .stat-value {
-  color: #059669;
-}
-
-.stat-card.danger .stat-value {
-  color: #dc2626;
-}
-
-.stat-card.info .stat-value {
-  color: #2563eb;
-}
+.stat-card.warning .stat-value { color: var(--color-warning); }
+.stat-card.success .stat-value { color: var(--color-success); }
+.stat-card.danger .stat-value { color: var(--color-danger); }
+.stat-card.info .stat-value { color: var(--color-accent); }
 
 .card {
-  background: white;
-  border-radius: 10px;
-  padding: 1.25rem;
-  border: 1px solid #e2e8f0;
-  margin-bottom: 1.25rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  margin-bottom: var(--space-5);
 }
 
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
-  padding-bottom: 0.875rem;
-  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .card-title {
-  font-size: 1.125rem;
-  font-weight: 700;
-  color: #0f172a;
-  letter-spacing: -0.025em;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
 }
 
 .table-container {
@@ -377,26 +420,24 @@ table {
 }
 
 thead {
-  background: #f8fafc;
-  border-top: 1px solid #e2e8f0;
-  border-bottom: 1px solid #e2e8f0;
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
 }
 
 th {
   text-align: left;
-  padding: 0.5rem 0.75rem;
-  font-weight: 600;
-  color: #475569;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  padding: var(--space-2) var(--space-3);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
 }
 
 td {
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-2) var(--space-3);
   border-top: 1px solid #f1f5f9;
-  color: #334155;
-  font-size: 0.875rem;
+  color: var(--color-text-body);
+  font-size: var(--text-sm);
 }
 
 tbody tr {
@@ -404,83 +445,81 @@ tbody tr {
 }
 
 tbody tr:hover {
-  background: #f8fafc;
+  background: var(--color-bg);
 }
 
 .badge {
   display: inline-block;
-  padding: 0.313rem 0.75rem;
-  border-radius: 6px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.025em;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 500;
 }
 
-.badge.success {
-  background: #d1fae5;
-  color: #065f46;
-}
+/* Status colors are unchanged so views and charts stay consistent */
+.badge.success,
+.badge.increasing { background: #d1fae5; color: #065f46; }
 
-.badge.warning {
-  background: #fed7aa;
-  color: #92400e;
-}
+.badge.warning,
+.badge.medium { background: #fed7aa; color: #92400e; }
 
-.badge.danger {
-  background: #fecaca;
-  color: #991b1b;
-}
+.badge.danger,
+.badge.decreasing,
+.badge.high { background: #fecaca; color: #991b1b; }
 
-.badge.info {
-  background: #dbeafe;
-  color: #1e40af;
-}
+.badge.info,
+.badge.low { background: #dbeafe; color: #1e40af; }
 
-.badge.increasing {
-  background: #d1fae5;
-  color: #065f46;
-}
-
-.badge.decreasing {
-  background: #fecaca;
-  color: #991b1b;
-}
-
-.badge.stable {
-  background: #e0e7ff;
-  color: #3730a3;
-}
-
-.badge.high {
-  background: #fecaca;
-  color: #991b1b;
-}
-
-.badge.medium {
-  background: #fed7aa;
-  color: #92400e;
-}
-
-.badge.low {
-  background: #dbeafe;
-  color: #1e40af;
-}
+.badge.stable { background: #e0e7ff; color: #3730a3; }
 
 .loading {
   text-align: center;
-  padding: 3rem;
-  color: #64748b;
-  font-size: 0.938rem;
+  padding: var(--space-6);
+  color: var(--color-text-muted);
+  font-size: var(--text-base);
 }
 
 .error {
   background: #fef2f2;
   border: 1px solid #fecaca;
   color: #991b1b;
-  padding: 1rem;
-  border-radius: 8px;
-  margin: 1rem 0;
-  font-size: 0.938rem;
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  margin: var(--space-4) 0;
+  font-size: var(--text-base);
+}
+
+@media (max-width: 900px) {
+  .app-header {
+    padding: 0 var(--space-4);
+  }
+
+  .main-content {
+    padding: var(--space-4);
+  }
+}
+
+/* Below 640px the sidebar leaves the grid and becomes an off-canvas drawer */
+@media (max-width: 639px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .menu-button {
+    display: inline-flex;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell {
+    transition: none;
+  }
+}
+
+/* Drop the profile name on small screens so the header actions fit */
+@media (max-width: 639px) {
+  .app-actions .profile-name {
+    display: none;
+  }
 }
 </style>

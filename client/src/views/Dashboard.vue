@@ -71,6 +71,34 @@
       <!-- Summary Section -->
       <div class="summary-section">
         <h3 class="section-title">{{ t('dashboard.summary.title') }}</h3>
+
+        <!-- My Tasks: pending only, overdue first; full management stays in TasksModal -->
+        <div class="card my-tasks-card">
+          <div class="card-header">
+            <h3 class="card-title">
+              {{ t('tasks.title') }}
+              <span v-if="pendingCount > 0" class="my-tasks-count">{{ t('tasks.pendingCount', { count: pendingCount }) }}</span>
+            </h3>
+            <button type="button" class="my-tasks-manage" @click="openTasks">{{ t('tasks.manageTasks') }}</button>
+          </div>
+          <p v-if="visibleTasks.length === 0" class="my-tasks-empty">{{ t('tasks.noPending') }}</p>
+          <ul v-else class="my-tasks-list">
+            <li v-for="task in visibleTasks" :key="task.id" class="my-task" :class="`priority-${task.priority}`">
+              <input
+                type="checkbox"
+                class="my-task-check"
+                :checked="task.status === 'completed'"
+                :aria-label="t('tasks.markComplete', { title: task.title })"
+                @change="toggleTask(task.id)"
+              />
+              <span class="my-task-title">{{ task.title }}</span>
+              <span :class="['badge', task.priority]">{{ translatePriority(task.priority) }}</span>
+              <span class="my-task-due">{{ formatTaskDue(task.dueDate) }}</span>
+              <span class="my-task-status" :class="taskStatusClass(task)">{{ taskStatusText(task) }}</span>
+            </li>
+          </ul>
+          <p v-if="hiddenCount > 0" class="my-tasks-more">{{ t('tasks.more', { count: hiddenCount }) }}</p>
+        </div>
       </div>
 
       <!-- Charts Grid -->
@@ -301,6 +329,7 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { api } from '../api'
 import { useFilters } from '../composables/useFilters'
 import { useI18n } from '../composables/useI18n'
+import { useTasks, taskStatusClass, parseDueDate } from '../composables/useTasks'
 import { formatCurrency } from '../utils/currency'
 import ProductDetailModal from '../components/ProductDetailModal.vue'
 import BacklogDetailModal from '../components/BacklogDetailModal.vue'
@@ -312,7 +341,27 @@ export default {
     BacklogDetailModal,
   },
   setup() {
-    const { t, currentCurrency, translateProductName, translateWarehouse } = useI18n()
+    const { t, currentCurrency, currentLocale, translateProductName, translateWarehouse } = useI18n()
+    const { pendingTasks, pendingCount, openTasks, toggleTask } = useTasks()
+
+    const MAX_VISIBLE_TASKS = 5
+    const visibleTasks = computed(() => pendingTasks.value.slice(0, MAX_VISIBLE_TASKS))
+    const hiddenCount = computed(() => Math.max(0, pendingCount.value - MAX_VISIBLE_TASKS))
+
+    const taskStatusText = (task) => {
+      const cls = taskStatusClass(task)
+      if (cls === 'overdue') return t('tasks.overdue')
+      if (cls === 'urgent') return t('tasks.dueSoon')
+      return t('tasks.upcoming')
+    }
+
+    const formatTaskDue = (dueDate) => {
+      const date = parseDueDate(dueDate)
+      if (isNaN(date.getTime())) return '-'
+      return date.toLocaleDateString(currentLocale.value === 'ja' ? 'ja-JP' : 'en-US', {
+        month: 'short', day: 'numeric', year: 'numeric'
+      })
+    }
     const loading = ref(true)
     const error = ref(null)
     const summary = ref({})
@@ -681,6 +730,14 @@ export default {
 
     return {
       t,
+      visibleTasks,
+      hiddenCount,
+      pendingCount,
+      openTasks,
+      toggleTask,
+      taskStatusClass,
+      taskStatusText,
+      formatTaskDue,
       loading,
       error,
       summary,
@@ -1110,6 +1167,125 @@ export default {
 
 .clickable-row:hover {
   background: #eff6ff !important;
+}
+
+/* My Tasks section (prefixed my-task* to stay clear of the legacy .task-* rules below) */
+.summary-section {
+  margin-bottom: 1.25rem;
+}
+
+.my-tasks-card {
+  margin-bottom: 0;
+}
+
+.my-tasks-count {
+  margin-left: 0.5rem;
+  font-size: 0.813rem;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.my-tasks-manage {
+  padding: 0.375rem 0.75rem;
+  background: white;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #334155;
+  font: inherit;
+  font-size: 0.813rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.my-tasks-manage:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.my-tasks-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.my-task {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0;
+  border-top: 1px solid #f1f5f9;
+}
+
+.my-task:first-child {
+  border-top: 0;
+}
+
+.my-task-check {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: #0f172a;
+}
+
+.my-task-title {
+  flex: 1;
+  min-width: 0;
+  color: #0f172a;
+  font-size: 0.875rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.my-task-due {
+  font-size: 0.813rem;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.my-task-status {
+  min-width: 5.5rem;
+  text-align: center;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.my-task-status.overdue { background: #fecaca; color: #991b1b; }
+.my-task-status.urgent { background: #fed7aa; color: #92400e; }
+.my-task-status.upcoming { background: #dbeafe; color: #1e40af; }
+
+.my-tasks-empty,
+.my-tasks-more {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.my-tasks-empty {
+  padding: 0.5rem 0;
+}
+
+.my-tasks-more {
+  margin-top: 0.5rem;
+  font-size: 0.813rem;
+}
+
+@media (max-width: 639px) {
+  .my-task {
+    flex-wrap: wrap;
+  }
+
+  .my-task-title {
+    flex-basis: calc(100% - 2rem);
+  }
+
+  /* Align badges under the title, past the checkbox */
+  .my-task-check + .my-task-title + .badge {
+    margin-left: calc(18px + 0.75rem);
+  }
 }
 
 /* Tasks Card Styles */
