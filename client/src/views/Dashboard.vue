@@ -114,21 +114,17 @@
               <div class="order-health-chart">
                 <svg viewBox="0 0 200 200" class="donut-svg-compact">
                   <circle cx="100" cy="100" r="65" fill="none" stroke="#e2e8f0" stroke-width="25"/>
-                  <circle cx="100" cy="100" r="65" fill="none" stroke="#10b981" stroke-width="25"
-                    :stroke-dasharray="`${getCircleSegment(statusData.delivered)} 408`"
-                    stroke-dashoffset="0" transform="rotate(-90 100 100)"/>
-                  <circle cx="100" cy="100" r="65" fill="none" stroke="#3b82f6" stroke-width="25"
-                    :stroke-dasharray="`${getCircleSegment(statusData.shipped)} 408`"
-                    :stroke-dashoffset="`-${getCircleSegment(statusData.delivered)}`"
-                    transform="rotate(-90 100 100)"/>
-                  <circle cx="100" cy="100" r="65" fill="none" stroke="#f59e0b" stroke-width="25"
-                    :stroke-dasharray="`${getCircleSegment(statusData.processing)} 408`"
-                    :stroke-dashoffset="`-${getCircleSegment(statusData.delivered) + getCircleSegment(statusData.shipped)}`"
-                    transform="rotate(-90 100 100)"/>
-                  <circle cx="100" cy="100" r="65" fill="none" stroke="#ef4444" stroke-width="25"
-                    :stroke-dasharray="`${getCircleSegment(statusData.backordered)} 408`"
-                    :stroke-dashoffset="`-${getCircleSegment(statusData.delivered) + getCircleSegment(statusData.shipped) + getCircleSegment(statusData.processing)}`"
-                    transform="rotate(-90 100 100)"/>
+                  <circle
+                    v-for="seg in donutSegments"
+                    :key="seg.status"
+                    cx="100" cy="100" r="65" fill="none" stroke-width="25"
+                    :stroke="seg.color"
+                    :stroke-dasharray="`${seg.length} ${DONUT_CIRCUMFERENCE}`"
+                    :stroke-dashoffset="-seg.offset"
+                    transform="rotate(-90 100 100)"
+                    class="donut-segment"
+                    v-bind="markProps('donut-' + seg.status, seg.tooltip)"
+                  />
                   <text x="100" y="90" text-anchor="middle" class="donut-center-label">{{ t('dashboard.orderHealth.total') }}</text>
                   <text x="100" y="120" text-anchor="middle" class="donut-center-value">{{ orderHealthMetrics.totalOrders }}</text>
                 </svg>
@@ -175,7 +171,11 @@
               <div v-for="cat in categoryData" :key="cat.name" class="h-bar-item">
                 <div class="h-bar-label">{{ translateCategory(cat.name) }}</div>
                 <div class="h-bar-container">
-                  <div class="h-bar" :style="{ width: (cat.value / maxCategoryValue * 100) + '%', background: cat.color }">
+                  <div
+                    class="h-bar"
+                    :style="{ width: (cat.value / maxCategoryValue * 100) + '%', background: cat.color }"
+                    v-bind="markProps('cat-' + cat.name, categoryTooltip(cat))"
+                  >
                     <span class="h-bar-value">{{ selectedCurrency === 'JPY' ? formatCurrency(cat.value, selectedCurrency) : `$${(cat.value / 1000).toFixed(1)}K` }}</span>
                   </div>
                 </div>
@@ -302,6 +302,8 @@
       </div>
     </div>
 
+    <ChartTooltip :tip="tip" />
+
     <ProductDetailModal
       :is-open="showProductModal"
       :product="selectedProduct"
@@ -333,12 +335,15 @@ import { useTasks, taskStatusClass, parseDueDate } from '../composables/useTasks
 import { formatCurrency } from '../utils/currency'
 import ProductDetailModal from '../components/ProductDetailModal.vue'
 import BacklogDetailModal from '../components/BacklogDetailModal.vue'
+import ChartTooltip from '../components/ChartTooltip.vue'
+import { useChartTooltip } from '../composables/useChartTooltip'
 
 export default {
   name: 'Dashboard',
   components: {
     ProductDetailModal,
     BacklogDetailModal,
+    ChartTooltip,
   },
   setup() {
     const { t, currentCurrency, currentLocale, translateProductName, translateWarehouse } = useI18n()
@@ -640,9 +645,56 @@ export default {
              statusData.value.processing + statusData.value.backordered
     })
 
+    // Circumference of the r=65 donut ring (2*pi*65). Segment lengths must be scaled
+    // to this, otherwise the segments sum past a full turn and overlap the start.
+    const DONUT_CIRCUMFERENCE = 408.4
+
     const getCircleSegment = (value) => {
-      return totalOrders.value > 0 ? (value / totalOrders.value) * 440 : 0
+      return totalOrders.value > 0 ? (value / totalOrders.value) * DONUT_CIRCUMFERENCE : 0
     }
+
+    const { tip, markProps } = useChartTooltip()
+
+    const DONUT_STATUSES = [
+      { status: 'delivered', color: '#10b981' },
+      { status: 'shipped', color: '#3b82f6' },
+      { status: 'processing', color: '#f59e0b' },
+      { status: 'backordered', color: '#ef4444' }
+    ]
+
+    // One entry per non-empty slice; offset accumulates the lengths of earlier slices.
+    const donutSegments = computed(() => {
+      let offset = 0
+      return DONUT_STATUSES.filter(s => statusData.value[s.status] > 0).map(s => {
+        const count = statusData.value[s.status]
+        const length = getCircleSegment(count)
+        const seg = {
+          ...s,
+          length,
+          offset,
+          tooltip: {
+            title: t(`status.${s.status}`),
+            rows: [
+              { label: t('chart.orders'), value: String(count), color: s.color },
+              { label: t('chart.share'), value: `${(count / totalOrders.value * 100).toFixed(1)}%` }
+            ]
+          }
+        }
+        offset += length
+        return seg
+      })
+    })
+
+    const categoryTotal = computed(() => categoryData.value.reduce((sum, c) => sum + c.value, 0))
+
+    const categoryTooltip = (cat) => ({
+      title: translateCategory(cat.name),
+      rows: [
+        { label: t('chart.value'), value: formatCurrency(Math.round(cat.value), currentCurrency.value) },
+        { label: t('chart.share'), value: `${categoryTotal.value > 0 ? (cat.value / categoryTotal.value * 100).toFixed(1) : '0.0'}%` },
+        { label: t('chart.items'), value: String(cat.count) }
+      ]
+    })
 
     const getStockBadge = (level) => {
       if (level === 'In Stock') return 'success'
@@ -753,6 +805,11 @@ export default {
       backlogItems,
       calculatePercentage,
       getCircleSegment,
+      DONUT_CIRCUMFERENCE,
+      donutSegments,
+      categoryTooltip,
+      tip,
+      markProps,
       getStockBadge,
       translateCategory,
       translateStockLevel,
@@ -936,6 +993,35 @@ export default {
 .donut-svg-compact {
   width: 200px;
   height: 200px;
+}
+
+.donut-segment {
+  transition: opacity 0.15s ease;
+}
+
+.donut-segment:hover,
+.donut-segment:focus-visible {
+  opacity: 0.8;
+  outline: none;
+}
+
+/* Focus ring for an SVG stroke: widen the ring slightly (no layout shift inside the viewBox). */
+.donut-segment:focus-visible {
+  stroke-width: 30;
+}
+
+.h-bar:hover,
+.h-bar:focus-visible {
+  filter: brightness(1.15);
+  outline: none;
+}
+
+.h-bar:focus-visible {
+  box-shadow: inset 0 0 0 2px #0f172a;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .donut-segment { transition: none; }
 }
 
 .donut-center-label {
