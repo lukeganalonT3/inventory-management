@@ -321,6 +321,17 @@ export default {
   },
 
   // Common
+  chart: {
+    value: 'Value',
+    share: 'Share of total',
+    orders: 'Orders',
+    items: 'SKUs',
+    total: 'Total',
+    revenue: 'Revenue',
+    costs: 'Costs',
+    amount: 'Amount',
+    change: 'Change'
+  },
   common: {
     loading: 'Loading...',
     error: 'Error',

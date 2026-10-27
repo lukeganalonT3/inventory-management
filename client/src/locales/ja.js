@@ -321,6 +321,17 @@ export default {
   },
 
   // Common
+  chart: {
+    value: '金額',
+    share: '構成比',
+    orders: '注文数',
+    items: 'SKU数',
+    total: '合計',
+    revenue: '売上',
+    costs: 'コスト',
+    amount: '金額',
+    change: '変化'
+  },
   common: {
     loading: '読み込み中...',
     error: 'エラー',

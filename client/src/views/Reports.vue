@@ -47,20 +47,42 @@
           <h3 class="card-title">Monthly Revenue Trend</h3>
         </div>
         <div class="chart-container">
-          <div class="bar-chart">
-            <div v-for="(month, index) in monthlyData" :key="index" class="bar-wrapper">
-              <div class="bar-container">
+          <div class="trend-chart">
+            <div class="y-axis" aria-hidden="true">
+              <span
+                v-for="tick in yAxis.ticks"
+                :key="tick"
+                class="y-tick"
+                :style="{ bottom: (tick / yAxis.max * 100) + '%' }"
+              >{{ formatCompact(tick) }}</span>
+            </div>
+            <div class="plot">
+              <div class="gridlines" aria-hidden="true">
                 <div
-                  class="bar"
-                  :style="{ height: getBarHeight(month.revenue) + 'px' }"
-                  :title="'$' + formatNumber(month.revenue)"
+                  v-for="tick in yAxis.ticks"
+                  :key="tick"
+                  class="gridline"
+                  :style="{ bottom: (tick / yAxis.max * 100) + '%' }"
                 ></div>
               </div>
-              <div class="bar-label">{{ formatMonth(month.month) }}</div>
+              <div class="bar-chart">
+                <div v-for="month in monthlyData" :key="month.month" class="bar-wrapper">
+                  <div class="bar-container">
+                    <div
+                      class="bar"
+                      :style="{ height: (month.revenue / yAxis.max * 100) + '%' }"
+                      v-bind="markProps('month-' + month.month, monthTooltip(month))"
+                    ></div>
+                  </div>
+                  <div class="bar-label">{{ formatMonth(month.month) }}</div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <ChartTooltip :tip="tip" />
 
       <!-- Month-over-Month Comparison -->
       <div class="card">
@@ -126,9 +148,18 @@
 
 <script>
 import axios from 'axios'
+import ChartTooltip from '../components/ChartTooltip.vue'
+import { useChartTooltip } from '../composables/useChartTooltip'
+import { useI18n } from '../composables/useI18n'
 
 export default {
   name: 'Reports',
+  components: { ChartTooltip },
+  setup() {
+    const { tip, markProps } = useChartTooltip()
+    const { t } = useI18n()
+    return { tip, markProps, t }
+  },
   data() {
     return {
       loading: true,
@@ -145,7 +176,38 @@ export default {
     console.log('Reports component mounted')
     this.loadData()
   },
+  computed: {
+    // Single source of truth for the y-axis: gridlines, tick labels and bar heights
+    // all derive from this max, so they cannot drift apart.
+    yAxis() {
+      const maxRevenue = this.monthlyData.reduce((m, d) => Math.max(m, d.revenue || 0), 0)
+      if (maxRevenue <= 0) return { max: 1, ticks: [0, 1] }
+      // Aim for ~4 intervals, then round the step up to 1, 2, 2.5, 5 or 10 times a
+      // power of ten so tick values are "nice" ($500K, $1M) instead of arbitrary.
+      const rawStep = maxRevenue / 4
+      const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)))
+      const step = [1, 2, 2.5, 5, 10].map(m => m * magnitude).find(s => s >= rawStep)
+      const intervals = Math.ceil(maxRevenue / step - 1e-9)
+      const ticks = []
+      for (let i = 0; i <= intervals; i++) ticks.push(i * step)
+      return { max: intervals * step, ticks }
+    }
+  },
   methods: {
+    formatCompact(value) {
+      return '$' + new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value)
+    },
+
+    monthTooltip(month) {
+      return {
+        title: this.formatMonth(month.month),
+        rows: [
+          { label: this.t('chart.revenue'), value: '$' + this.formatNumber(month.revenue) },
+          { label: this.t('chart.orders'), value: String(month.order_count) }
+        ]
+      }
+    },
+
     async loadData() {
       console.log('Loading reports data...')
       try {
@@ -252,24 +314,6 @@ export default {
       return monthNames[monthIndex] + ' ' + year
     },
 
-    getBarHeight(revenue) {
-      console.log('Calculating bar height for revenue:', revenue)
-      // Calculate bar height (max height 200px)
-      var maxRevenue = 0
-      for (var i = 0; i < this.monthlyData.length; i++) {
-        if (this.monthlyData[i].revenue > maxRevenue) {
-          maxRevenue = this.monthlyData[i].revenue
-        }
-      }
-
-      if (maxRevenue === 0) {
-        return 0
-      }
-
-      var height = (revenue / maxRevenue) * 200
-      return height
-    },
-
     getFulfillmentClass(rate) {
       if (rate >= 90) {
         return 'badge success'
@@ -368,9 +412,55 @@ export default {
   min-height: 300px;
 }
 
-.bar-chart {
+.trend-chart {
   display: flex;
-  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+/* Axis and plot share the same 200px band as .bar-container so ticks line up with bars. */
+.y-axis {
+  position: relative;
+  width: 3.25rem;
+  height: 200px;
+  flex-shrink: 0;
+}
+
+.y-tick {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  font-size: 0.75rem;
+  line-height: 1;
+  color: #94a3b8;
+}
+
+.plot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.gridlines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 200px;
+  border-left: 1px solid #e2e8f0;
+}
+
+.gridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px solid #e2e8f0;
+}
+
+.bar-chart {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
   justify-content: space-around;
   height: 250px;
   gap: 0.5rem;
@@ -399,8 +489,19 @@ export default {
   cursor: pointer;
 }
 
-.bar:hover {
+.bar:hover,
+.bar:focus-visible {
   background: linear-gradient(to top, #2563eb, #3b82f6);
+  opacity: 0.85;
+}
+
+.bar:focus-visible {
+  outline: 2px solid #0f172a;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar { transition: none; }
 }
 
 .bar-label {

@@ -55,9 +55,9 @@
             </div>
             <div class="chart-area">
               <div v-for="month in monthlyRevenue" :key="month.month" class="bar-group-revenue">
-                <div class="revenue-bars">
-                  <div class="revenue-bar" :style="{ height: getRevenueBarHeight(month.revenue) + '%' }" :title="`Revenue: ${currencySymbol}${month.revenue.toLocaleString()}`"></div>
-                  <div class="cost-bar" :style="{ height: getRevenueBarHeight(month.costs) + '%' }" :title="`Costs: ${currencySymbol}${month.costs.toLocaleString()}`"></div>
+                <div class="revenue-bars" v-bind="markProps('rev-' + month.month, revenueTooltip(month))">
+                  <div class="revenue-bar" :style="{ height: getRevenueBarHeight(month.revenue) + '%' }"></div>
+                  <div class="cost-bar" :style="{ height: getRevenueBarHeight(month.costs) + '%' }"></div>
                 </div>
                 <span class="bar-label">{{ translateMonth(month.month) }}</span>
               </div>
@@ -89,11 +89,16 @@
             </div>
             <div class="chart-area">
               <div v-for="month in monthlySpending" :key="month.month" class="bar-group">
-                <div class="stacked-bar" @click="showCostDetail(month)">
-                  <div class="bar-segment procurement" :style="{ height: getBarHeight(month.procurement) + '%' }" :title="`Procurement: ${currencySymbol}${month.procurement.toLocaleString()}`"></div>
-                  <div class="bar-segment operational" :style="{ height: getBarHeight(month.operational) + '%' }" :title="`Operational: ${currencySymbol}${month.operational.toLocaleString()}`"></div>
-                  <div class="bar-segment labor" :style="{ height: getBarHeight(month.labor) + '%' }" :title="`Labor: ${currencySymbol}${month.labor.toLocaleString()}`"></div>
-                  <div class="bar-segment overhead" :style="{ height: getBarHeight(month.overhead) + '%' }" :title="`Overhead: ${currencySymbol}${month.overhead.toLocaleString()}`"></div>
+                <div
+                  class="stacked-bar"
+                  v-bind="markProps('cost-' + month.month, costTooltip(month))"
+                  @click="showCostDetail(month)"
+                  @keydown.enter="showCostDetail(month)"
+                >
+                  <div class="bar-segment procurement" :style="{ height: getBarHeight(month.procurement) + '%' }"></div>
+                  <div class="bar-segment operational" :style="{ height: getBarHeight(month.operational) + '%' }"></div>
+                  <div class="bar-segment labor" :style="{ height: getBarHeight(month.labor) + '%' }"></div>
+                  <div class="bar-segment overhead" :style="{ height: getBarHeight(month.overhead) + '%' }"></div>
                 </div>
                 <span class="bar-label">{{ translateMonth(month.month) }}</span>
               </div>
@@ -114,7 +119,7 @@
                 <div class="category-name">{{ translateCategory(category.category) }}</div>
                 <div class="category-amount">{{ currencySymbol }}{{ category.amount.toLocaleString() }}</div>
               </div>
-              <div class="category-bar-container">
+              <div class="category-bar-container" v-bind="markProps('spend-' + category.category, categoryTooltip(category))">
                 <div class="category-bar" :style="{ width: category.percentage + '%' }"></div>
               </div>
               <div class="category-meta">
@@ -163,6 +168,8 @@
       </div>
     </div>
 
+    <ChartTooltip :tip="tip" />
+
     <CostDetailModal
       :is-open="showCostModal"
       :cost-data="selectedCostData"
@@ -178,11 +185,14 @@ import { useFilters } from '../composables/useFilters'
 import { useI18n } from '../composables/useI18n'
 import { formatCurrency as formatCurrencyUtil } from '../utils/currency'
 import CostDetailModal from '../components/CostDetailModal.vue'
+import ChartTooltip from '../components/ChartTooltip.vue'
+import { useChartTooltip } from '../composables/useChartTooltip'
 
 export default {
   name: 'Spending',
   components: {
-    CostDetailModal
+    CostDetailModal,
+    ChartTooltip
   },
   setup() {
     const { t, currentCurrency } = useI18n()
@@ -383,6 +393,41 @@ export default {
       return currentCurrency.value === 'JPY' ? '¥' : '$'
     })
 
+    const { tip, markProps } = useChartTooltip()
+    const money = (v) => `${currencySymbol.value}${Math.round(v).toLocaleString()}`
+
+    const revenueTooltip = (month) => ({
+      title: translateMonth(month.month),
+      rows: [
+        { label: t('finance.revenueVsCosts.revenue'), value: money(month.revenue), color: '#0f172a' },
+        { label: t('finance.revenueVsCosts.costs'), value: money(month.costs), color: '#ef4444' }
+      ]
+    })
+
+    const COST_SERIES = [
+      { key: 'procurement', color: '#3b82f6' },
+      { key: 'operational', color: '#8b5cf6' },
+      { key: 'labor', color: '#10b981' },
+      { key: 'overhead', color: '#f59e0b' }
+    ]
+
+    const costTooltip = (month) => ({
+      title: translateMonth(month.month),
+      rows: [
+        ...COST_SERIES.map(s => ({ label: t(`finance.monthlyCostFlow.${s.key}`), value: money(month[s.key]), color: s.color })),
+        { label: t('chart.total'), value: money(COST_SERIES.reduce((sum, s) => sum + (month[s.key] || 0), 0)) }
+      ]
+    })
+
+    const categoryTooltip = (category) => ({
+      title: translateCategory(category.category),
+      rows: [
+        { label: t('chart.amount'), value: money(category.amount) },
+        { label: t('chart.share'), value: `${category.percentage}%` },
+        { label: t('chart.change'), value: `${category.change > 0 ? '+' : ''}${category.change}%` }
+      ]
+    })
+
     const getBarHeight = (value) => {
       const maxValue = 25000
       return (value / maxValue) * 100
@@ -475,6 +520,11 @@ export default {
       maxRevenueValue,
       formatCurrency,
       currencySymbol,
+      tip,
+      markProps,
+      revenueTooltip,
+      costTooltip,
+      categoryTooltip,
       getBarHeight,
       getRevenueBarHeight,
       formatDate,
@@ -683,6 +733,28 @@ export default {
 
 .bar-segment:hover {
   opacity: 0.8;
+}
+
+/* Hover/focus affordance on the whole mark; opacity and outline only, so nothing shifts. */
+.revenue-bars:hover .revenue-bar,
+.revenue-bars:hover .cost-bar {
+  opacity: 0.8;
+}
+
+.revenue-bars:focus-visible,
+.stacked-bar:focus-visible,
+.category-bar-container:focus-visible {
+  outline: 2px solid #0f172a;
+  outline-offset: 2px;
+}
+
+.category-bar-container:hover .category-bar {
+  opacity: 0.8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .revenue-bar, .cost-bar, .bar-segment, .stacked-bar, .category-bar { transition: none; }
+  .revenue-bar:hover, .cost-bar:hover { transform: none; }
 }
 
 .bar-label {
