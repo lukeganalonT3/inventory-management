@@ -120,6 +120,25 @@ class CreatePurchaseOrderRequest(BaseModel):
     expected_delivery_date: str
     notes: Optional[str] = None
 
+class Task(BaseModel):
+    id: int
+    title: str
+    priority: str
+    dueDate: str
+    status: str = "pending"
+
+class CreateTaskRequest(BaseModel):
+    title: str
+    priority: str = "medium"
+    dueDate: str
+
+# In-memory task store (resets on restart, like the rest of the mock data).
+# IDs start at 1000 because the frontend tells built-in mock tasks (small integer
+# ids from useAuth.js) apart from API tasks by id; a collision would make it
+# toggle/delete the wrong list.
+tasks: List[dict] = []
+_next_task_id = 1000
+
 # API endpoints
 @app.get("/")
 def root():
@@ -303,6 +322,35 @@ def get_monthly_trends():
     result = list(months.values())
     result.sort(key=lambda x: x['month'])
     return result
+
+@app.get("/api/tasks", response_model=List[Task])
+def get_tasks():
+    return tasks
+
+@app.post("/api/tasks", response_model=Task)
+def create_task(request: CreateTaskRequest):
+    global _next_task_id
+    task = {**request.model_dump(), "id": _next_task_id, "status": "pending"}
+    _next_task_id += 1
+    # Newest first, matching the frontend which unshifts new tasks.
+    tasks.insert(0, task)
+    return task
+
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: int):
+    for i, task in enumerate(tasks):
+        if task["id"] == task_id:
+            tasks.pop(i)
+            return {"message": "Task deleted"}
+    raise HTTPException(status_code=404, detail="Task not found")
+
+@app.patch("/api/tasks/{task_id}", response_model=Task)
+def toggle_task(task_id: int):
+    for task in tasks:
+        if task["id"] == task_id:
+            task["status"] = "completed" if task["status"] == "pending" else "pending"
+            return task
+    raise HTTPException(status_code=404, detail="Task not found")
 
 if __name__ == "__main__":
     import uvicorn
