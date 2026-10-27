@@ -301,7 +301,16 @@ export default {
     priority: 'Priority',
     dueDate: 'Due Date',
     addTask: 'Add Task',
-    noTasks: 'No tasks yet. Add your first task above!'
+    noTasks: 'No tasks yet. Add your first task above!',
+    pendingCount: '{count} pending',
+    myTasksAria: 'My Tasks, {count} pending',
+    manageTasks: 'Manage tasks',
+    noPending: 'You have no pending tasks.',
+    markComplete: 'Mark "{title}" as complete',
+    overdue: 'Overdue',
+    dueSoon: 'Due Soon',
+    upcoming: 'Upcoming',
+    more: '+{count} more'
   },
 
   // Language
